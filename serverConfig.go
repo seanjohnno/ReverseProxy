@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"fmt"
 )
 
 // ----------------------------------------
@@ -16,7 +15,8 @@ type ServerBlock struct {
 }
 
 type ServerResource struct {
-	Type, Path, Cachestrategy, Cachelimit string	
+	Type, Path, Cachestrategy string	
+	Cachelimit int
 }
 
 // ----------------------------------------
@@ -35,13 +35,11 @@ func LoadConfigFromFile(configLocation string) ([]ServerBlock, error) {
 func LoadConfig(config io.Reader) ([]ServerBlock, error) {
 	sb := make([]ServerBlock, 0)
 	d := json.NewDecoder(config)
-	decodeErr := d.Decode(sb)
+	decodeErr := d.Decode(&sb)
 
 	if decodeErr != nil {
 		panic(decodeErr)
 	}
-
-	fmt.Println(len(sb))
 
 	return sb, decodeErr
 }
