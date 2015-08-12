@@ -15,7 +15,7 @@ type ServerBlock struct {
 }
 
 type ServerResource struct {
-	Type, Path, Cachestrategy string	
+	Type, Path, Cachestrategy, Match string	
 	Cachelimit int
 }
 
