@@ -17,6 +17,7 @@ type ServerBlock struct {
 type ServerResource struct {
 	Type, Path, Cachestrategy, Match string	
 	Cachelimit int
+	AcceptEncoding bool
 }
 
 // ----------------------------------------

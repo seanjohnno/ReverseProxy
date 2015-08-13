@@ -13,7 +13,7 @@ const (
 	HttpSocket = "http_socket"
 )
 
-type HandlerFunc func(w http.ResponseWriter, req *http.Request)
+type HandlerFunc func(w http.ResponseWriter, req *http.Request, res *ServerResource)
 
 type ServerHandler struct {
 	DefaultMappings []PathMapping
@@ -23,6 +23,7 @@ type ServerHandler struct {
 type PathMapping struct {
 	Pattern *regexp.Regexp
 	Handler HandlerFunc
+	Resource *ServerResource
 }
 
 func (sh *ServerHandler) HostHandler(w http.ResponseWriter, req *http.Request) {
@@ -42,21 +43,17 @@ func (sh *ServerHandler) HostHandler(w http.ResponseWriter, req *http.Request) {
 	// Now we need to match path
 	mapping := matchMapping(mappings, req)
 	if mapping != nil {
-		mapping.Handler(w, req)
+		mapping.Handler(w, req, mapping.Resource)
 	} else {
 		panic("Implement 404 handler")
 	}
 }
 
-func (sh *ServerHandler) FileHandler(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "Hello, FileHandler")
+func (sh *ServerHandler) UnixSocketHandler(w http.ResponseWriter, req *http.Request, res *ServerResource) {
+	fmt.Fprintf(w, "Hello, UnixSocketHandler")
 }
 
-func (sh *ServerHandler) UnixSocketHandler(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprintf(w, "Hello, UnixSocketHandler")
-}
-
-func (sh *ServerHandler) HTTPSocketHandler(w http.ResponseWriter, req *http.Request) {
+func (sh *ServerHandler) HTTPSocketHandler(w http.ResponseWriter, req *http.Request, res *ServerResource) {
 	fmt.Fprintf(w, "Hello, HTTPSocketHandler")
 }
 
@@ -92,11 +89,11 @@ func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 			var p PathMapping
 			switch resource.Type {
 			case FileSystem:
-				p = PathMapping {Pattern: re, Handler: sh.FileHandler}
+				p = PathMapping {Pattern: re, Handler: sh.FileHandler, Resource: &resource}
 			case UnixSocket:
-				p = PathMapping {Pattern: re, Handler: sh.UnixSocketHandler}
+				p = PathMapping {Pattern: re, Handler: sh.UnixSocketHandler, Resource: &resource}
 			case HttpSocket:
-				p = PathMapping {Pattern: re, Handler: sh.HTTPSocketHandler}
+				p = PathMapping {Pattern: re, Handler: sh.HTTPSocketHandler, Resource: &resource}
 			default:
 				panic(fmt.Sprintf("Unknown handler Type: %s", resource.Type))
 			}
