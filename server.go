@@ -80,7 +80,8 @@ func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 
 		// Run through paths and create regex
 		for _, resource := range sb.Content {
-
+			resource.Init()
+			
 			re, err := regexp.Compile(resource.Match)
 			if err != nil {
 				panic(err)

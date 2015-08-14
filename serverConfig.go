@@ -15,9 +15,24 @@ type ServerBlock struct {
 }
 
 type ServerResource struct {
-	Type, Path, Cachestrategy, Match string	
+	Type, Path, CacheStrategy, Match string	
 	Cachelimit int
-	AcceptEncoding bool
+	Compression bool
+	Cache Cache
+}
+
+func (this *ServerResource) Init() {
+	switch this.CacheStrategy {
+	case "lru":
+		if this.Cachelimit <= 0 {
+			panic("Need to set CacheLimit to a positive integer")
+		}
+		this.Cache = CreateLRUCache(this.Cachelimit)
+	case "":
+		// Do nothing - No cache strategy
+	default:
+		panic("Unknown cache strategy")
+	}
 }
 
 // ----------------------------------------

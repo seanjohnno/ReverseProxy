@@ -2,15 +2,21 @@ package reverseproxy
 
 import (
 	"errors"
+	"sync"
 )
 
 const (
 	ErrorExceedsMaxSize = "Exceeds max size, can't store"
 )
 
+var (
+	mutex = sync.Mutex { }
+)
+
 type Cache interface {
 	Add(key string, val CacheItem) error
 	Get(key string) (CacheItem, bool)
+	Remove(key string)
 }
 
 type CacheItem interface {
@@ -18,9 +24,11 @@ type CacheItem interface {
 }
 
 type lruCache struct {
-	keyValMap map[string]lruCacheItem
+	keyValMap map[string]*lruCacheItem
+	
 	head *lruCacheItem
 	tail *lruCacheItem
+
 	maxSize int
 	curSize int
 }
@@ -32,69 +40,120 @@ type lruCacheItem struct {
 	next *lruCacheItem
 }
 
-func (this *lruCacheItem) removeAndJoinNeighbours() {
-	if this.prev != nil {
-		this.prev.next = this.next
-	}
-	if this.next != nil {
-		this.next.prev = this.prev
-	}
-}
+// ----------------------------------------------------------------------------------------------------
 
 func CreateLRUCache(maxsize int) (Cache) {
-	return &lruCache { keyValMap: make(map[string]lruCacheItem), maxSize: maxsize }
+	return &lruCache { keyValMap: make(map[string]*lruCacheItem), maxSize: maxsize }
 }
 
-func (this *lruCache) Add(k string, val CacheItem) error {
+func (this *lruCache) Add(k string, v CacheItem) error {
+
+	this.Remove(k)
+
+	// Create item
+	lruItem := &lruCacheItem { cacheItem: v, key: k }
 
 	// Can't store if it already exceeds max size
-	if val.Size() > this.maxSize {
+	if v.Size() > this.maxSize {
 		return errors.New(ErrorExceedsMaxSize)
 	}
 
-	// Remove older entries if we're going to exceed max size
-	for val.Size() + this.curSize > this.maxSize {
-		this.maxSize -= this.tail.cacheItem.Size()
-		oldTail := this.tail
-		this.tail = this.tail.prev
-		
-		if this.tail == nil {
-			this.head = nil
-		}
+	// Lock method
+	mutex.Lock()
+	defer mutex.Unlock()
 
-		delete(this.keyValMap, oldTail.key)
+	for this.curSize + v.Size() > this.maxSize {
+		delete(this.keyValMap, this.tail.key)
+		this.curSize -= this.tail.cacheItem.Size()
+
+		newTail := this.tail.prev
+		if newTail != nil {
+			newTail.next = nil
+			this.tail = newTail
+		} else {
+			this.head = nil
+			this.tail = nil
+		}
 	}
 
-	// 
-	lruItem := lruCacheItem { cacheItem: val, key: k }
-	this.insert(&lruItem)
-	
-	// Add to map
+	// Add to map (locking as maps aren't thread safe)
 	this.keyValMap[k] = lruItem
 
-	// Increase size
-	this.curSize = this.curSize + val.Size()
+	if this.head == nil {
+		this.head = lruItem
+		this.tail = lruItem
+	} else {
+		lruItem.next = this.head
+		this.head.prev = lruItem
+		this.head = lruItem
+	}
 
 	return nil
 }
 
 func (this *lruCache) Get(key string) (CacheItem, bool) {
+	
+	// Lock method
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	val, containsKey := this.keyValMap[key]
+
 	if containsKey {
-		val.removeAndJoinNeighbours()
-		this.insert(&val)
-		return val.cacheItem, true
+		if this.head != val {
+			val.prev.next = val.next
+
+			if val.next != nil {
+				val.next.prev = val.prev
+			}
+
+			val.prev = nil
+			val.next = this.head
+			this.head.prev = val
+			this.head = val
+		}
+		return val.cacheItem, containsKey
 	}
 	return nil, false
 }
 
-func (this *lruCache) insert(val *lruCacheItem) {
-	if this.head != nil {
-		this.head.prev = val
-		val.next = this.head
-		this.head = val
-	} else {
-		this.head = val
-		this.tail = val
+func (this *lruCache) Remove(key string) {
+	// Lock method
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Check if cache is still here
+	lruCacheItem, present := this.keyValMap[key]
+	if present {
+		delete(this.keyValMap, key)
+
+		this.curSize -= lruCacheItem.cacheItem.Size()
+
+		// If the node is the head of the linked list
+		if lruCacheItem == this.head {
+			if this.head.next != nil {
+				lruCacheItem.next.prev = nil
+				this.head = lruCacheItem.next
+			} else {
+				this.head = nil
+				this.tail = nil
+			}
+
+		// If the node is the tail of the linked list
+		} else if lruCacheItem == this.tail {
+			
+			if this.tail.prev != nil {
+				lruCacheItem.prev.next = nil
+				this.tail = lruCacheItem.prev
+			} else {
+				this.head = nil
+				this.tail = nil
+			}
+
+		// If the nodes in the middle then join the neighbours up
+		} else {
+			lruCacheItem.prev.next = lruCacheItem.next
+			lruCacheItem.next.prev = lruCacheItem.prev
+		}
 	}
 }
