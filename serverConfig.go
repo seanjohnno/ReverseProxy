@@ -15,10 +15,11 @@ type ServerBlock struct {
 }
 
 type ServerResource struct {
-	Type, Path, CacheStrategy, Match string	
+	Type, Path, CacheStrategy, Match, DefaultFile, DefaultExtension string	
 	Cachelimit int
 	Compression bool
 	Cache Cache
+	Error map[string]string
 }
 
 func (this *ServerResource) Init() {

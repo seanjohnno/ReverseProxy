@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"fmt"
+	"strconv"
 )
 
 //  Request / Response headers + value indicating whether client can accept compressed content and whether returned content is compressed
@@ -51,8 +51,10 @@ var (
 	}
 )
 
-const(
+var (
 	HttpNotModified			= 304
+	HttpNotFound 			= 404
+	HttpInternalServerError = 500
 )
 
 var (
@@ -73,15 +75,27 @@ func (this *FileCacheItem) Size() int {
 // limit allows and also uses caching headers + If-Modified-Since so content doesn't need to be served
 // again
 func (sh *ServerHandler) FileHandler(w http.ResponseWriter, req *http.Request, res *ServerResource) {
+	// Combine fs path + request path to create absolute path
+	path := createUrl(&(req.URL.Path), res)
+	fileHandler(w, req, res, path, true)
+}
 
-	url := createUrl(req, res)
-	setContentTypeHeader(w, url)
+func fileHandler(w http.ResponseWriter, req *http.Request, res *ServerResource, path *string, tryErrorPages bool) {
+	// Set content-type based on extension
+	setContentTypeHeader(w, path)
+	
+	// Attempt to open file info
+	fileInfo, fileErr := os.Stat(*path);
+	if fileErr != nil {
+		handleError(w, req, res, HttpNotFound, tryErrorPages)
+		return
 
-	// Check If-Modified-Since
-	fileInfo, fileErr := os.Stat(*url)
-	if fileErr == nil && !isModifiedSince(req, url, fileInfo) {
+	// If client already has file then return not modified, no need to write body
+	} else if !isModifiedSince(req, path, fileInfo) {
 		w.WriteHeader(HttpNotModified)
 		return
+
+	// Set cache headers so clients with subsequently send If-Modified-Since header
 	} else {
 		w.Header()[HeaderExpires] = []string{ ValueExpires }
 		w.Header()[HeaderCacheControl] = []string{ ValueCacheControl }
@@ -95,57 +109,35 @@ func (sh *ServerHandler) FileHandler(w http.ResponseWriter, req *http.Request, r
 		w.Header()[HeaderContentEncoding] = []string{CompressionGzip}
 	}
 
-	// Create cache key
-	fileCacheItem, cacheKey := retrieveCache(res, url)
-
-	// Check if cache is stale
-	if(fileCacheItem != nil && !fileInfo.ModTime().Equal(fileCacheItem.FileModTime)) {
+	// Get cache key, check if stale by comparing store modified time, remove if so
+	fileCacheItem, cacheKey := retrieveCache(res, path)
+	if fileCacheItem != nil && !fileInfo.ModTime().Equal(fileCacheItem.FileModTime) {
 		fileCacheItem = nil
 		res.Cache.Remove(cacheKey)
 	}
 
 	var fileContent []byte
 
-	// If we don't have cache or cache is stale then reload from filesystem
-	if fileCacheItem == nil {
-		// Buffer to hold file content
-		f, err := os.Open(*url)
-		defer f.Close()
-		if err != nil {
-			panic("Implement 404 handler")
-		}
-		
-		// Read all of file content
-		fileContent, err = ioutil.ReadAll(f)
-		if err != nil {
-			panic(err)
-		}
+	// If we have cache then we can just set data here
+	if fileCacheItem != nil {
+		fileContent = fileCacheItem.Data
 
-		// Use compression
-		if useCompression {
-			buf := bytes.NewBuffer( make([]byte, 0) )
-			compressionWriter := gzip.NewWriter(buf)
-			_, err := compressionWriter.Write(fileContent)
-			if err != nil {
-				panic(err)
-			}
-			compressionWriter.Close()
-			fileContent = buf.Bytes()
+	// If we don't have cache (or cache was stale) then reload from filesystem	
+	} else {
+		if fileContent, fileErr = loadResourceFromFS(path, useCompression); fileErr != nil {
+			handleError(w, req, res, HttpInternalServerError, tryErrorPages)
+			return
 		}
 
 		if cacheKey != "" {
-			fmt.Println("Adding to cache")
 			res.Cache.Add( cacheKey, &FileCacheItem{ Data: fileContent, FileModTime: fileInfo.ModTime() } )
 		}
-	} else {
-		fmt.Println("Fetching from cache")
-		fileContent = fileCacheItem.Data
 	}
 
-	// TODO - Need to check returned int against size?
-	_, writeErr := w.Write(fileContent)
-	if writeErr != nil {
-		panic("Implement 500 handler - Writer error")
+	// Write response body
+	if _, writeErr := w.Write(fileContent); writeErr != nil {
+		handleError(w, req, res, HttpInternalServerError, tryErrorPages)
+		return
 	}
 }
 
@@ -172,19 +164,21 @@ func retrieveCache(res *ServerResource, url *string) (cacheItem *FileCacheItem, 
 	return
 }
 
-func createUrl(req *http.Request, res *ServerResource) *string {
+func createUrl(requestPath *string, res *ServerResource) *string {
 	// Concatenate path from config with path supplied in URL
 	var urlBuffer bytes.Buffer
 	urlBuffer.WriteString(res.Path)
-	urlBuffer.WriteString(req.URL.Path)
+	urlBuffer.WriteString(*requestPath)
+
+	// If we finish in a slash then we're a directory and we need a default file
+	if strings.HasSuffix(*requestPath, "/") {
+		urlBuffer.WriteString(res.DefaultFile)
 
 	// No extension so lets assume .html
-	if !strings.Contains(req.URL.Path, ".") {
-		urlBuffer.WriteString(HtmlExtension)
+	} else if !strings.Contains(*requestPath, ".") {
+		urlBuffer.WriteString(res.DefaultExtension)
 	}
 	url := urlBuffer.String()
-
-	fmt.Println(url)
 
 	return &url
 }
@@ -238,4 +232,60 @@ func setContentTypeHeader(w http.ResponseWriter, url *string) {
 	}
 
 	w.Header()[HeaderContentType] = []string{PlainTextMimeType}
+}
+
+func handleError(w http.ResponseWriter, req *http.Request, res *ServerResource, error int, allowErrorRedirect bool) {
+
+	if allowErrorRedirect {
+
+		// See if we have a specific file for the error
+		errStr := strconv.Itoa(error)
+		path, hasErrorPage := res.Error[errStr]
+		
+		// No specific error handler so check for generic
+		if !hasErrorPage {
+			var pathBuffer bytes.Buffer
+			pathBuffer.WriteString(errStr[:len(errStr)-1])
+			pathBuffer.WriteString("x")
+			path, hasErrorPage = res.Error[pathBuffer.String()]
+		}
+
+		if hasErrorPage {
+			errorPath := createUrl(&path, res)
+			fileHandler(w, req, res, errorPath, false)
+			return
+		}
+
+	}
+	w.WriteHeader(error)
+}
+
+func loadResourceFromFS(path *string, useCompression bool) ([]byte, error) {
+	// Buffer to hold file content
+	f, err := os.Open(*path)
+	defer f.Close()
+	if err != nil {
+		return nil, err
+	}
+	
+	// Read all of file content
+	fileContent, err := ioutil.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+
+	// Use compression
+	if useCompression {
+		buf := bytes.NewBuffer( make([]byte, 0) )
+		
+		compressionWriter := gzip.NewWriter(buf)
+		_, err := compressionWriter.Write(fileContent)
+		compressionWriter.Close()
+		if err != nil {
+			return nil, err
+		}
+		
+		fileContent = buf.Bytes()
+	}
+	return fileContent, nil
 }
