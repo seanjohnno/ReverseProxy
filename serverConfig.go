@@ -22,7 +22,6 @@ type ServerBlock struct {
 	// Content is used to match on the "Path" passed in the HTTP request
 	Content []ServerResource
 
-
 	// Default indicates that if theres no host matches then use this as the default
 	Default bool
 }
@@ -42,6 +41,9 @@ type Host struct {
 
 	// KeyFile is used to point to the location of a key file for HTTPS (empty if http)
 	KeyFile string
+
+	// Indicates port to start/listen on
+	Port int
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -96,6 +98,11 @@ type ServerResource struct {
 
 // CacheStrategy is used to configure the type of caching we want
 type CacheStrategy struct {
+
+	// CacheName is used when creating/accessing the cache
+	//
+	// It allows multiple ServerResource blocks to share the same cache if required
+	CacheName string
 
 	// Strategy indicates the caching algorithm used.
 	//
