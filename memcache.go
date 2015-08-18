@@ -31,6 +31,8 @@ type lruCache struct {
 
 	maxSize int
 	curSize int
+
+	mutex sync.Mutex
 }
 
 type lruCacheItem struct {
@@ -43,7 +45,7 @@ type lruCacheItem struct {
 // ----------------------------------------------------------------------------------------------------
 
 func CreateLRUCache(maxsize int) (Cache) {
-	return &lruCache { keyValMap: make(map[string]*lruCacheItem), maxSize: maxsize }
+	return &lruCache { keyValMap: make(map[string]*lruCacheItem), maxSize: maxsize, mutex: sync.Mutex { } }
 }
 
 func (this *lruCache) Add(k string, v CacheItem) error {
@@ -59,8 +61,8 @@ func (this *lruCache) Add(k string, v CacheItem) error {
 	}
 
 	// Lock method
-	mutex.Lock()
-	defer mutex.Unlock()
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
 
 	for this.curSize + v.Size() > this.maxSize {
 		delete(this.keyValMap, this.tail.key)
@@ -94,8 +96,8 @@ func (this *lruCache) Add(k string, v CacheItem) error {
 func (this *lruCache) Get(key string) (CacheItem, bool) {
 	
 	// Lock method
-	mutex.Lock()
-	defer mutex.Unlock()
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
 
 	val, containsKey := this.keyValMap[key]
 
@@ -119,8 +121,8 @@ func (this *lruCache) Get(key string) (CacheItem, bool) {
 
 func (this *lruCache) Remove(key string) {
 	// Lock method
-	mutex.Lock()
-	defer mutex.Unlock()
+	this.mutex.Lock()
+	defer this.mutex.Unlock()
 
 	// Check if cache is still here
 	lruCacheItem, present := this.keyValMap[key]

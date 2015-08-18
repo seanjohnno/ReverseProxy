@@ -119,21 +119,23 @@ type RequestContext struct {
 func CreateRequestContext(resource *ServerResource, cacheMap map[string]Cache) (*RequestContext) {
 	rc := &RequestContext{ Resource: resource}
 	
-	// We have CacheName so we want to check if its already been created
-	if resource.Cache.CacheName != "" {
-		// It its present we can just assign
-		if c, OK := cacheMap[resource.Cache.CacheName]; OK {
-			rc.Cache = c
+	if resource.Cache.Limit > 0 {
+		// We have CacheName so we want to check if its already been created
+		if resource.Cache.Name != "" {
+			// It its present we can just assign
+			if c, OK := cacheMap[resource.Cache.Name]; OK {
+				rc.Cache = c
 
-		// If its not present then create and add to hash
+			// If its not present then create and add to hash
+			} else {
+				c = CreateCache(resource)
+				cacheMap[resource.Cache.Name] = c
+				rc.Cache = c
+			}
+		// No CacheName so we just create
 		} else {
-			c = CreateCache(resource)
-			cacheMap[resource.Cache.CacheName] = c
-			rc.Cache = c
+			rc.Cache = CreateCache(resource)
 		}
-	// No CacheName so we just create
-	} else {
-		rc.Cache = CreateCache(resource)
 	}
 
 	// Create a map of error codes to file locations
@@ -158,7 +160,7 @@ func CreateCache(rsc *ServerResource) Cache {
 	switch rsc.Cache.Strategy {
 		// TODO - Need to add a map to memcache
 	case "lru":
-		return CreateLRUCache(rsc.Cache.CacheLimit)
+		return CreateLRUCache(rsc.Cache.Limit)
 	case "":
 		panic("You need to specify a cache strategy")
 	default:

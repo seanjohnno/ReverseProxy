@@ -86,6 +86,7 @@ func (this *FileCacheAcessor) GetFile() []byte {
 			// If cache is stale (by comparing file timestamps) then we remove it
 			if !this.FileInfo.ModTime().Equal(item.FileModTime) {
 				this.UnderlyingCache.Remove(this.CacheKey)
+				Debug("+GetFile - Removing from cache: " + this.CacheKey)
 				return nil
 			}
 			return item.Data

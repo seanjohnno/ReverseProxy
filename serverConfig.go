@@ -102,7 +102,7 @@ type CacheStrategy struct {
 	// CacheName is used when creating/accessing the cache
 	//
 	// It allows multiple ServerResource blocks to share the same cache if required
-	CacheName string
+	Name string
 
 	// Strategy indicates the caching algorithm used.
 	//
@@ -110,7 +110,7 @@ type CacheStrategy struct {
 	Strategy string
 
 	// CacheLimit is the maximum size in bytes the cache is allowed to grow to
-	CacheLimit int
+	Limit int
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

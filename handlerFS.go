@@ -41,7 +41,7 @@ var (
 	// mimeMap maps file extensions to content types - TODO - needs to be expanded / perhaps read from a config file(?)
 	mimeMap = map[string]string {
 		".html": "text/html",
-		",css": "text/css",	
+		".css": "text/css",	
 		".js": "text/javascript",
 		".ico": "image/x-icon",
 		".jpg": "image/jpeg",
@@ -49,17 +49,6 @@ var (
 		".png": "image/png",
 		".gif": "image/gif",
 	}
-)
-
-// One of the Http[*] ints
-type HttpStatusCode	int
-
-// HTTP return codes
-var (
-	HttpOK HttpStatusCode					= 200
-	HttpNotModified	HttpStatusCode			= 304
-	HttpNotFound HttpStatusCode				= 404
-	HttpInternalServerError HttpStatusCode	= 500
 )
 
 var (
@@ -76,21 +65,44 @@ var (
 // It works by attempting to combine ServerResource.Path (from config) with the request path
 // + defaulting extensions or files if they're missing (also from config)
 func HandlerFS(w http.ResponseWriter, req *http.Request, context *RequestContext) {
-	
+
+	Debug("+HandlerFS - Path: " + req.URL.Path)
+
 	// Combine fs path + request path to create absolute path
 	path, fileInfo := findFile(req.URL.Path, context.Resource)
 	
 	// If file hasn't been found then write error page or error response
 	if fileInfo == nil {
-		handleError(w, req, context, HttpNotFound)
+		HandleError(w, req, context, http.StatusNotFound)
 		return
 	}
 
 	// Try to write our file to http.ResponseWriter
-	if retCode := writeFile(w, req, context, fileInfo, path); retCode != HttpOK || retCode != HttpNotModified {
+	if retCode := writeFile(w, req, context, fileInfo, path); !(retCode == http.StatusOK || retCode == http.StatusNotModified) {
 		
 		// If error writing then write error page or error response
-		handleError(w, req, context, retCode)
+		HandleError(w, req, context, retCode)
+	}
+}
+
+// handleError will attempt to serve an error page instead of a status code
+//
+// If it has a handler for 
+func HandleError(w http.ResponseWriter, req *http.Request, context *RequestContext, error int) {
+
+	// If we can't find a mapping for the error:page then just write status code
+	if errorPath, fileInfo := findErrorFile(context, int(error)); fileInfo == nil {
+		w.WriteHeader(error)
+
+	// If we can find a mapping...
+	} else {
+		// Remove If-Modified-Since as it doesn't relate to this error page
+		req.Header.Del(HeaderIfModifiedSince)
+
+		// Attempt to write error page, if theres an error doing this then just write status code
+		if retCode := writeFile(w, req, context, fileInfo, errorPath); retCode != http.StatusOK {
+			w.WriteHeader(error)
+		}
 	}
 }
 
@@ -103,14 +115,15 @@ func HandlerFS(w http.ResponseWriter, req *http.Request, context *RequestContext
 // It works by attempting to combine ServerResource.Path (from config) with the request path
 // + defaulting extensions or files if they're missing (also from config). If everythings OK
 // it should return 'OK' (200) or 'Not Modified' (304), otherwise its an error code
-func writeFile(w http.ResponseWriter, req *http.Request, context *RequestContext, fileInfo os.FileInfo, path string) (HttpStatusCode) {
+func writeFile(w http.ResponseWriter, req *http.Request, context *RequestContext, fileInfo os.FileInfo, path string) (int) {
 	// Set content-type based on extension
 	setContentTypeHeader(w, fileInfo)
 	
 	// If client already has file then return not modified, no need to write body
 	if !isModifiedSince(req, path, fileInfo) {
-		w.WriteHeader(int(HttpNotModified))
-		return HttpNotModified
+		Debug("+writeFile - File not modified")
+		w.WriteHeader(http.StatusNotModified)
+		return http.StatusNotModified
 
 	// Set cache headers so clients with subsequently send If-Modified-Since header
 	} else {
@@ -123,6 +136,7 @@ func writeFile(w http.ResponseWriter, req *http.Request, context *RequestContext
 	compressionTypes, acceptsCompression := req.Header[HeaderAcceptEncoding]
 	useCompression := context.Resource.Compression && acceptsCompression && containsInArray(compressionTypes, CompressionGzip)
 	if useCompression {
+		Debug("+writeFile - Using compression")
 		w.Header()[HeaderContentEncoding] = []string{CompressionGzip}
 	}
 
@@ -131,44 +145,26 @@ func writeFile(w http.ResponseWriter, req *http.Request, context *RequestContext
 
 	// If we have cache then we can just set data here
 	if fileContent = fileCache.GetFile(); fileContent == nil {
+		Debug("+writeFile - Loading from filesystem")
 
 		// Otherwise we load it from the filesystem
 		var fileErr error
 		if fileContent, fileErr = loadResourceFromFS(path, useCompression); fileErr != nil {
-			return HttpInternalServerError
+			return http.StatusInternalServerError
 		}
 
 		// Add it to the cache
 		fileCache.PutFile(fileContent, fileInfo.ModTime())
+	} else {
+		Debug("+writeFile - Serving from cache")
 	}
 
 	// Write response body
 	if _, writeErr := w.Write(fileContent); writeErr != nil {
-		return HttpInternalServerError
+		return http.StatusInternalServerError
 	}
 
-	return HttpOK
-}
-
-// handleError will attempt to serve an error page instead of a status code
-//
-// If it has a handler for 
-func handleError(w http.ResponseWriter, req *http.Request, context *RequestContext, error HttpStatusCode) {
-
-	// If we can't find a mapping for the error:page then just write status code
-	if errorPath, fileInfo := findErrorFile(context, int(error)); fileInfo == nil {
-		w.WriteHeader(int(error))
-
-	// If we can find a mapping...
-	} else {
-		// Remove If-Modified-Since as it doesn't relate to this error page
-		req.Header.Del(HeaderIfModifiedSince)
-
-		// Attempt to write error page, if theres an error doing this then just write status code
-		if retCode := writeFile(w, req, context, fileInfo, errorPath); retCode != HttpOK {
-			w.WriteHeader(int(error))
-		}
-	}
+	return http.StatusOK
 }
 
 // findErrorFile attempts to return the path of an error file matching the error code
@@ -197,7 +193,7 @@ func findErrorFile(context *RequestContext, error int) (string, os.FileInfo) {
 // Returned fileInfo will be nil if no valid file could be found
 func findFile(requestPath string, res *ServerResource) (string, os.FileInfo) {
 
-	filePath := requestPath + res.Path
+	filePath :=  res.Path + requestPath
 
 	// If we finish in a slash then we're a directory and we need a default file
 	if strings.HasSuffix(requestPath, "/") {
@@ -229,9 +225,12 @@ func findFileByAppending(filePath string, appendSlice []string) (string, os.File
 	// Run through list specified in config
 	for _, suffix := range appendSlice {
 		fullPath := filePath + suffix
+
 		if f, err := os.Stat(fullPath); err == nil {
+			Debug("+findFileByAppending. Found file: " + fullPath)
 			return fullPath, f
 		}
+		Debug("+findFileByAppending. No match for file: " + fullPath)
 	}
 	return "", nil
 }
