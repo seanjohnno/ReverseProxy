@@ -116,8 +116,8 @@ type RequestContext struct {
 // CreateRequestContext creates and initialises a RequestContext
 //
 // Checks existing cacheMap as cache objects can be shared
-func CreateRequestContext(resource *ServerResource, cacheMap map[string]Cache) (*RequestContext) {
-	rc := &RequestContext{ Resource: resource}
+func CreateRequestContext(resource ServerResource, cacheMap map[string]Cache) (*RequestContext) {
+	rc := &RequestContext{ Resource: &resource}
 	
 	if resource.Cache.Limit > 0 {
 		// We have CacheName so we want to check if its already been created
@@ -128,13 +128,13 @@ func CreateRequestContext(resource *ServerResource, cacheMap map[string]Cache) (
 
 			// If its not present then create and add to hash
 			} else {
-				c = CreateCache(resource)
+				c = CreateCache(&resource)
 				cacheMap[resource.Cache.Name] = c
 				rc.Cache = c
 			}
 		// No CacheName so we just create
 		} else {
-			rc.Cache = CreateCache(resource)
+			rc.Cache = CreateCache(&resource)
 		}
 	}
 
@@ -242,7 +242,7 @@ func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 		for _, resource := range sb.Content {
 
 			// Create context so we can pass ServerResource and cache into requests
-			context := CreateRequestContext(&resource, cacheMap)
+			context := CreateRequestContext(resource, cacheMap)
 
 			// Create regex to match paths
 			re, err := regexp.Compile(resource.Match)
