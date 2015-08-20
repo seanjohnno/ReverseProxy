@@ -6,6 +6,7 @@ import (
 	"strings"
 	"regexp"
 	"strconv"
+	"github.com/seanjohnno/memcache"
 )
 
 // Handler types. Known 'type' to use inside content block
@@ -107,7 +108,7 @@ type RequestContext struct {
 	Resource *ServerResource
 
 	// Cache implementation if specified in config
-	Cache Cache
+	Cache memcache.Cache
 
 	// ErrorMap is used when an error occurs and we want to display an error page rather than send an error code
 	ErrorMappings []ErrorMapping
@@ -116,7 +117,7 @@ type RequestContext struct {
 // CreateRequestContext creates and initialises a RequestContext
 //
 // Checks existing cacheMap as cache objects can be shared
-func CreateRequestContext(resource ServerResource, cacheMap map[string]Cache) (*RequestContext) {
+func CreateRequestContext(resource ServerResource, cacheMap map[string]memcache.Cache) (*RequestContext) {
 	rc := &RequestContext{ Resource: &resource}
 	
 	if resource.Cache.Limit > 0 {
@@ -156,11 +157,11 @@ func CreateRequestContext(resource ServerResource, cacheMap map[string]Cache) (*
 	return rc
 }
 
-func CreateCache(rsc *ServerResource) Cache {
+func CreateCache(rsc *ServerResource) memcache.Cache {
 	switch rsc.Cache.Strategy {
 		// TODO - Need to add a map to memcache
 	case "lru":
-		return CreateLRUCache(rsc.Cache.Limit)
+		return memcache.CreateLRUCache(rsc.Cache.Limit)
 	case "":
 		panic("You need to specify a cache strategy")
 	default:
@@ -225,7 +226,7 @@ func listenAndServe(serverBlocks []ServerBlock) {
 func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 
 	// Blocks can share cache objects so create map here
-	cacheMap := make(map[string]Cache)
+	cacheMap := make(map[string]memcache.Cache)
 
 	// Create our ServerHandler to hold all host/path mappings
 	sh := ServerHandler { HostMappings: make(map[string][]PathMapping) }

@@ -3,6 +3,7 @@ package reverseproxy
 import (
 	"time"
 	"os"
+	"github.com/seanjohnno/memcache"
 )
 
 const (
@@ -52,14 +53,14 @@ type FileCacheAcessor struct {
 	Compression bool
 
 	// UnderlyingCache is the cache algol we're using to store/retrieve the file content
-	UnderlyingCache Cache
+	UnderlyingCache memcache.Cache
 
 	// CacheKey is used to get/set the data in the cache
 	CacheKey string
 }
 
 // NewFileCache create
-func NewFileCache(filePath string, fileInfo os.FileInfo, compression bool, cache Cache) (*FileCacheAcessor) {
+func NewFileCache(filePath string, fileInfo os.FileInfo, compression bool, cache memcache.Cache) (*FileCacheAcessor) {
 	if cache == nil {
 		return &FileCacheAcessor{}
 	} else {
