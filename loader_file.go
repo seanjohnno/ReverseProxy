@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"io/ioutil"
 	"strings"
+	"net/http"
 )
 
 const (
@@ -33,7 +34,7 @@ var (
 // ------------------------------------------------------------------------------------------------------------------------
 
 type FileRetriever interface {
-	GetFile(filePath string, Resource *ServerResource, compression bool) (*FileContent, error)
+	GetFile(req *http.Request, Resource *ServerResource, compression bool) (*FileContent, error)
 }
 
 
@@ -69,8 +70,8 @@ type FileSystemLoader struct {
 
 }
 
-func (this *FileSystemLoader) GetFile(filePath string, resource *ServerResource, compression bool) (*FileContent, error) {
-	if fi, absolutePath := this.LocateFile(filePath, resource); fi != nil {
+func (this *FileSystemLoader) GetFile(req *http.Request, resource *ServerResource, compression bool) (*FileContent, error) {
+	if fi, absolutePath := this.LocateFile(req.URL.Path, resource); fi != nil {
 		
 		// Get mimetype and figure out whether we should ignore compression flag
 		mimeType := getContentTypeHeader(fi)

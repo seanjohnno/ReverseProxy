@@ -58,6 +58,8 @@ type FSHandler struct {
 // It's initialised with a cache if specified in the ServerResource
 func NewFSHandler(rsc *ServerResource, errorMappings []ErrorMapping, cacheBuilder *CacheBuilder) (*FSHandler) {
 	
+	Debug(errorMappings)
+
 	var fa FileRetriever
 	fa = &FileSystemLoader{}
 	
@@ -85,7 +87,7 @@ func (this *FSHandler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 	// Combine fs path + request path to create absolute path
 	// Check if we should be using compression or not + set header
 	useCompression := this.ShouldUseCompression(req)
-	if fc, err := this.FileAccessor.GetFile(req.URL.Path, this.Resource, useCompression); err == nil {
+	if fc, err := this.FileAccessor.GetFile(req, this.Resource, useCompression); err == nil {
 		this.WriteFile(w, req, fc)
 	} else {
 		this.HandleError(w, req, int(http.StatusNotFound), useCompression)
@@ -96,10 +98,13 @@ func (this *FSHandler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 //
 // If it has a handler for 
 func (this *FSHandler) HandleError(w http.ResponseWriter, req *http.Request, error int, useCompression bool) {
+	Debug("+HandleError")
 	req.Header.Del(HeaderIfModifiedSince)
 
 	if errorFile := this.FindErrorFile(error); errorFile != "" {
-		if fc, err := this.FileAccessor.GetFile(errorFile, this.Resource, useCompression); err == nil {
+
+		req.URL.Path = errorFile
+		if fc, err := this.FileAccessor.GetFile(req, this.Resource, useCompression); err == nil {
 			this.WriteFile(w, req, fc)
 		} else {
 			w.WriteHeader(error)
@@ -107,6 +112,7 @@ func (this *FSHandler) HandleError(w http.ResponseWriter, req *http.Request, err
 	} else {
 		w.WriteHeader(error)
 	}
+	Debug("-HandleError")
 }
 
 // ------------------------------------------------------------------------------------------------------------------------

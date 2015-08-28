@@ -3,6 +3,7 @@ package reverseproxy
 import (
 	"os"
 	"github.com/seanjohnno/memcache"
+	"net/http"
 )
 
 const (
@@ -18,9 +19,10 @@ type CacheFileLoader struct {
 	UnderlyingCache memcache.Cache
 }
 
-func (this *CacheFileLoader) GetFile(filePath string, resource *ServerResource, compression bool) (*FileContent, error) {
+func (this *CacheFileLoader) GetFile(req *http.Request, resource *ServerResource, compression bool) (*FileContent, error) {
+	filePath := req.URL.Path
 	if fc := this.GetFileInCache(filePath, compression); fc == nil {
-		if fc, err := this.WrappedRetriever.GetFile(filePath, resource, compression); err == nil {
+		if fc, err := this.WrappedRetriever.GetFile(req, resource, compression); err == nil {
 
 			if fc.Compression {
 				filePath = filePath + CompressionSuffix
