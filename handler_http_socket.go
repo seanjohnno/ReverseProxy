@@ -3,7 +3,7 @@ package reverseproxy
 import (
 	"net/http"
 	"io"
-	"bytes"
+	"github.com/seanjohnno/objpool"
 )
 
 var (
@@ -11,47 +11,43 @@ var (
 )
 
 const (
+	BufferExpiryTime = 3000 // 3 seconds
 	BufferMax = 1024
 )
 
-func HandlerHttpSocket(w http.ResponseWriter, req *http.Request, context *RequestContext) {
+type HttpHandler struct {
+
+	// FSHandler contains ServerResource & ErrorMappings map
+	FSHandler
+
+	BufferPool objpool.ObjectPool
+}
+
+// NewHttpHandler returns an *NewHttpHandler
+func NewHttpHandler(rsc *ServerResource, errorMappings []ErrorMapping) (*HttpHandler) {
+	
+	// FileAccessor handles null cache
+	return &HttpHandler{ FSHandler: *NewFSHandler( rsc, errorMappings, nil ), BufferPool: objpool.NewTimedExiryPool(BufferExpiryTime) }
+}
+
+func (this *HttpHandler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 	Debug("+HandlerHttpSocket - Loading from http connection")
-	if status := handleSocket(w, req, context); !(status == http.StatusOK || status == http.StatusNotModified) {
-		HandleError(w, req, context, status)
+	useCompression := this.ShouldUseCompression(req)
+	if status := this.HandleSocket(w, req); !(status == http.StatusOK || status == http.StatusNotModified) {
+		this.HandleError(w, req, status, useCompression)
 	}
 }
 
-func handleSocket(w http.ResponseWriter, req *http.Request, context *RequestContext) int {
+func (this * HttpHandler) HandleSocket(w http.ResponseWriter, req *http.Request) int {
 
-	buf := bytes.Buffer { }
-	buf.WriteString(context.Resource.Path)
-	// buf.WriteString(req.URL.Path)
-	
-	// // Add query if we've got one
-	// if len(req.URL.RawQuery) > 0 {
-	// 	buf.WriteString("?")
-	// 	buf.WriteString(req.URL.RawQuery)
-	// }
-
-	// // Add fragment if we've got one
-	// if len(req.URL.Fragment) > 0 {
-	// 	buf.WriteString("#")
-	// 	buf.WriteString(req.URL.Fragment)
-	// }
-
-	Debug("+handleSocket - Method:", req.Method, "URL:", buf.String())
+	Debug("+handleSocket - Method:", req.Method, "URL:", this.Resource.Path)
 
 	// Create the request
-	if newReq, err := http.NewRequest(req.Method, buf.String(), nil); err == nil {
+	if newReq, err := http.NewRequest(req.Method, this.Resource.Path, nil); err == nil {
 		
 		newReq.Header = req.Header
 		newReq.URL.Path = req.URL.Path
 		newReq.URL.Fragment = req.URL.Fragment
-
-		// // Write the headers
-		// for k, v := range newReq.Header {
-		// 	newReq.Header[k] = v
-		// }
 
 		// Set the body to read from the incoming request - TODO: May need to kick off another goroutine to do this manually for slow connections, have some sort of pause if it can't read anything?
 		newReq.Body = req.Body
@@ -71,7 +67,7 @@ func handleSocket(w http.ResponseWriter, req *http.Request, context *RequestCont
 				}
 
 				// Write response body into ResponseWriter
-				if resp.Body == nil || writeBody(w, resp) == io.EOF {
+				if resp.Body == nil || this.writeBody(w, resp) == io.EOF {
 					return http.StatusOK
 				} else {
 					return http.StatusInternalServerError
@@ -89,7 +85,7 @@ func handleSocket(w http.ResponseWriter, req *http.Request, context *RequestCont
 	}
 }
 
-func writeBody(w http.ResponseWriter, resp *http.Response) error {
+func (this * HttpHandler) writeBody(w http.ResponseWriter, resp *http.Response) error {
 	reader := resp.Body
 
 	// May have content but length is unknown...
@@ -103,23 +99,22 @@ func writeBody(w http.ResponseWriter, resp *http.Response) error {
 
 		// Non empty body and we don't know size
 		} else {
-			return writeToResponse(w, make([]byte, BufferMax), &WrapperReader{ UnderlyingReader: reader, B: b[0], ByteRead: false} )
+			return this.writeToResponse(w, this.getByteBuffer(), &WrapperReader{ UnderlyingReader: reader, B: b[0], ByteRead: false} )
 		}
 
-	} else if resp.ContentLength > BufferMax {
-		return writeToResponse(w, make([]byte, BufferMax), reader)
-	
+	// TODO - Is it better to allocate ContentLength here or keep buffer size the same so they can all be fetched from the common pool
 	} else {
-		return writeToResponse(w, make([]byte, resp.ContentLength), reader)
+		return this.writeToResponse(w, this.getByteBuffer(), reader)
 	}
 }
 
-func writeToResponse(w http.ResponseWriter, buf []byte, resp io.ReadCloser) error {
+func (this *HttpHandler) writeToResponse(w http.ResponseWriter, buf []byte, resp io.ReadCloser) error {
 	for {
 		r, err := resp.Read(buf)
 		if r == 0 {
 			// Either reached end of file or we have an error
 			if err != nil {
+				this.BufferPool.Add(buf)
 				return err 
 			
 			// Not received any data here but not err or EOF
@@ -129,6 +124,14 @@ func writeToResponse(w http.ResponseWriter, buf []byte, resp io.ReadCloser) erro
 		} else {
 			w.Write(buf[:r])
 		}
+	}
+}
+
+func (this *HttpHandler) getByteBuffer() ([]byte) {
+	if buf, present := this.BufferPool.Retrieve(); present {
+		return buf.([]byte)
+	} else {
+		return make([]byte, BufferMax)
 	}
 }
 

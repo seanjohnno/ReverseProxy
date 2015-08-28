@@ -6,7 +6,6 @@ import (
 	"strings"
 	"regexp"
 	"strconv"
-	"github.com/seanjohnno/memcache"
 )
 
 // Handler types. Known 'type' to use inside content block
@@ -16,12 +15,20 @@ const (
 	HttpSocket = "http_socket"
 )
 
+var (
+	RscCacheBuilder = CreateCacheBuilder()
+)
+
 // ------------------------------------------------------------------------------------------------------------------------
-// interface: Handler
+// interface: RequestHandler
 // ------------------------------------------------------------------------------------------------------------------------
 
-// Handler is the function to implement to handle http requests
-type HandlerFunc func(w http.ResponseWriter, req *http.Request, context *RequestContext)
+// RequestHandler is the interface that http request handlers must implement
+type RequestHandler interface {
+
+	// HandleRequest is the method thats passed the http request and the Responsewriter to send the response
+	HandleRequest(w http.ResponseWriter, req *http.Request)
+}
 
 // ------------------------------------------------------------------------------------------------------------------------
 // struct: ServerHandler
@@ -57,7 +64,7 @@ func (sh *ServerHandler) HostHandler(w http.ResponseWriter, req *http.Request) {
 	// Now we need to match path
 	mapping := matchMapping(mappings, req)
 	if mapping != nil {
-		mapping.Handler(w, req, mapping.Context)
+		mapping.Handler.HandleRequest(w, req)
 	} else {
 		panic("Implement 404 handler")
 	}
@@ -73,11 +80,8 @@ type PathMapping struct {
 	// Pattern is a regex expression used to see if the request path matches
 	Pattern *regexp.Regexp
 
-	// Handler is the function called (to write the response) if Pattern matches
-	Handler HandlerFunc
-
-	// Context is used to give the RequestHandler function some context on why it was called + access to cache
-	Context *RequestContext
+	// Handler is the interface implementation called (to write the response) if Pattern matches
+	Handler RequestHandler
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -94,52 +98,7 @@ type ErrorMapping struct {
 	Path string
 }
 
-// ------------------------------------------------------------------------------------------------------------------------
-// struct: RequestContext
-// ------------------------------------------------------------------------------------------------------------------------
-
-// RequestContext is used to give request handlers context on why they were called and access to resources
-type RequestContext struct {
-
-	// Resource is used to give the RequestHandler function some context on why it was called
-	//
-	// This is so it knows how to seek a file or what are the connection details for a socket. Whether to use compression
-	// etc
-	Resource *ServerResource
-
-	// Cache implementation if specified in config
-	Cache memcache.Cache
-
-	// ErrorMap is used when an error occurs and we want to display an error page rather than send an error code
-	ErrorMappings []ErrorMapping
-}
-
-// CreateRequestContext creates and initialises a RequestContext
-//
-// Checks existing cacheMap as cache objects can be shared
-func CreateRequestContext(resource ServerResource, cacheMap map[string]memcache.Cache) (*RequestContext) {
-	rc := &RequestContext{ Resource: &resource}
-	
-	if resource.Cache.Limit > 0 {
-		// We have CacheName so we want to check if its already been created
-		if resource.Cache.Name != "" {
-			// It its present we can just assign
-			if c, OK := cacheMap[resource.Cache.Name]; OK {
-				rc.Cache = c
-
-			// If its not present then create and add to hash
-			} else {
-				c = CreateCache(&resource)
-				cacheMap[resource.Cache.Name] = c
-				rc.Cache = c
-			}
-		// No CacheName so we just create
-		} else {
-			rc.Cache = CreateCache(&resource)
-		}
-	}
-
-	// Create a map of error codes to file locations
+func CreateErrorMapping(resource ServerResource) []ErrorMapping {
 	if resource.Error != nil {
 		em := make([]ErrorMapping, 0)
 		
@@ -151,22 +110,9 @@ func CreateRequestContext(resource ServerResource, cacheMap map[string]memcache.
 			em = append(em, ErrorMapping { Pattern: re, Path: v } )
 		}
 
-		rc.ErrorMappings = em
+		return em
 	}
-
-	return rc
-}
-
-func CreateCache(rsc *ServerResource) memcache.Cache {
-	switch rsc.Cache.Strategy {
-		// TODO - Need to add a map to memcache
-	case "lru":
-		return memcache.CreateLRUCache(rsc.Cache.Limit)
-	case "":
-		panic("You need to specify a cache strategy")
-	default:
-		panic("Unknown cache strategy")
-	}
+	return nil
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -189,8 +135,9 @@ func listenAndServe(serverBlocks []ServerBlock) {
 	portsServed := make(map[int]bool)
 	tlsPort := -1
 
-	// Loop through each host in each server block
 	for _, serverBlock := range serverBlocks {
+		
+		// Loop through each host in each server block
 		for _, host := range serverBlock.Hosts {
 
 			// ...we haven't so create port string
@@ -219,14 +166,14 @@ func listenAndServe(serverBlocks []ServerBlock) {
 				}
 			}
 		}
-	}	
-}
+	}
+}	
+
 
 // createServerHandler runs through []ServerBlock and outputs ServerHandler which is used for routing http requests
 func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 
-	// Blocks can share cache objects so create map here
-	cacheMap := make(map[string]memcache.Cache)
+	cacheBuilder := CreateCacheBuilder()
 
 	// Create our ServerHandler to hold all host/path mappings
 	sh := ServerHandler { HostMappings: make(map[string][]PathMapping) }
@@ -240,10 +187,8 @@ func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 		}
 
 		// Run through paths and create regex for each
-		for _, resource := range sb.Content {
-
-			// Create context so we can pass ServerResource and cache into requests
-			context := CreateRequestContext(resource, cacheMap)
+		for i := 0; i < len(sb.Content); i++ {
+			resource := sb.Content[i]
 
 			// Create regex to match paths
 			re, err := regexp.Compile(resource.Match)
@@ -255,11 +200,11 @@ func createServerHandler(blocks []ServerBlock) (*ServerHandler) {
 			var p PathMapping
 			switch resource.Type {
 			case FileSystem:
-				p = PathMapping {Pattern: re, Handler: HandlerFS, Context: context}
+				p = PathMapping {Pattern: re, Handler: NewFSHandler( &resource, CreateErrorMapping(resource), cacheBuilder )}
 			case UnixSocket:
-				p = PathMapping {Pattern: re, Handler: HandlerUnixSocket, Context: context}
+				p = PathMapping {Pattern: re, Handler: NewHttpHandler( &resource, CreateErrorMapping(resource) )}
 			case HttpSocket:
-				p = PathMapping {Pattern: re, Handler: HandlerHttpSocket, Context: context}
+				p = PathMapping {Pattern: re, Handler: NewUnixHandler( &resource, CreateErrorMapping(resource) )}
 			default:
 				panic(fmt.Sprintf("Unknown handler Type: %s", resource.Type))
 			}
