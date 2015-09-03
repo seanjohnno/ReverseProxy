@@ -102,15 +102,13 @@ func CreateErrorMapping(resource ServerResource) []ErrorMapping {
 	if resource.Error != nil {
 		em := make([]ErrorMapping, 0)
 		
-		for k, v := range resource.Error {
-			re, err := regexp.Compile(k)
+		for _, errorRedirect := range resource.Error {
+			re, err := regexp.Compile(errorRedirect.Match)
 			if err != nil {
 				panic(err)
 			}
-			em = append(em, ErrorMapping { Pattern: re, Path: v } )
+			em = append(em, ErrorMapping { Pattern: re, Path: errorRedirect.Path } )
 		}
-
-		return em
 	}
 	return nil
 }

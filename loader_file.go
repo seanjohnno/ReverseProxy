@@ -103,6 +103,7 @@ func (this *FileSystemLoader) LocateFile(requestPath string, res *ServerResource
 
 	// No extension so lets try and append the ones specified as default
 	} else if !strings.Contains(requestPath, ".") {
+		
 		// Run through all default extensions supplied in the config
 		if fullPath, fileInfo := this.FindFileByAppending(filePath, res.FSDefaults.DefaultExtensions); fileInfo != nil {
 			return fileInfo, fullPath

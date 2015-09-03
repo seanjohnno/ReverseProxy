@@ -56,7 +56,7 @@ type FSHandler struct {
 // NewFSHandler returns an FSHandler
 //
 // It's initialised with a cache if specified in the ServerResource
-func NewFSHandler(rsc *ServerResource, errorMappings []ErrorMapping, cacheBuilder *CacheBuilder) (*FSHandler) {
+func NewFSHandler(rsc *ServerResource, errorMappings []ErrorMapping, cacheBuilder CacheBuilder) (*FSHandler) {
 	
 	Debug(errorMappings)
 
@@ -65,8 +65,9 @@ func NewFSHandler(rsc *ServerResource, errorMappings []ErrorMapping, cacheBuilde
 	
 	// If a cache is specified then we can wrap our FileRetriever with a cache FileRetriever
 	if rsc.Cache.Strategy != "" {
-		cache := cacheBuilder.CreateCache(rsc.Cache.Name, rsc.Cache.Strategy, rsc.Cache.Limit)
-		fa = &CacheFileLoader{ WrappedRetriever: fa, UnderlyingCache: cache }
+		if cache, err := cacheBuilder.CreateCache(rsc.Cache.Name, rsc.Cache.Strategy, rsc.Cache.Limit); cache != nil && err == nil {
+			 fa = &CacheFileLoader{ WrappedRetriever: fa, UnderlyingCache: cache }
+		}
 	}
 
 	return &FSHandler{ BaseHandler { rsc, errorMappings }, fa }
@@ -86,26 +87,26 @@ func (this *FSHandler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 
 	// Combine fs path + request path to create absolute path
 	// Check if we should be using compression or not + set header
-	useCompression := this.ShouldUseCompression(req)
+	useCompression := this.shouldUseCompression(req)
 	if fc, err := this.FileAccessor.GetFile(req, this.Resource, useCompression); err == nil {
-		this.WriteFile(w, req, fc)
+		this.writeFile(w, req, fc)
 	} else {
-		this.HandleError(w, req, int(http.StatusNotFound), useCompression)
+		this.handleError(w, req, int(http.StatusNotFound), useCompression)
 	}
 }
 
 // handleError will attempt to serve an error page instead of a status code
 //
 // If it has a handler for 
-func (this *FSHandler) HandleError(w http.ResponseWriter, req *http.Request, error int, useCompression bool) {
+func (this *FSHandler) handleError(w http.ResponseWriter, req *http.Request, error int, useCompression bool) {
 	Debug("+HandleError")
 	req.Header.Del(HeaderIfModifiedSince)
 
-	if errorFile := this.FindErrorFile(error); errorFile != "" {
+	if errorFile := this.findErrorFile(error); errorFile != "" {
 
 		req.URL.Path = errorFile
 		if fc, err := this.FileAccessor.GetFile(req, this.Resource, useCompression); err == nil {
-			this.WriteFile(w, req, fc)
+			this.writeFile(w, req, fc)
 		} else {
 			w.WriteHeader(error)
 		}
@@ -124,7 +125,7 @@ func (this *FSHandler) HandleError(w http.ResponseWriter, req *http.Request, err
 // It works by attempting to combine ServerResource.Path (from config) with the request path
 // + defaulting extensions or files if they're missing (also from config). If everythings OK
 // it should return 'OK' (200) or 'Not Modified' (304), otherwise its an error code
-func (this *FSHandler) WriteFile(w http.ResponseWriter, req *http.Request, content *FileContent) {
+func (this *FSHandler) writeFile(w http.ResponseWriter, req *http.Request, content *FileContent) {
 	
 	fileInfo := content.FileInfo
 
@@ -154,7 +155,7 @@ func (this *FSHandler) WriteFile(w http.ResponseWriter, req *http.Request, conte
 	Debug("Found file: " + content.AbsolutePath)
 	Debug("File size: " + strconv.Itoa(len(content.Data)))
 	if _, writeErr := w.Write(content.Data); writeErr != nil {
-		this.HandleError(w, req, int(http.StatusInternalServerError), content.Compression)
+		this.handleError(w, req, int(http.StatusInternalServerError), content.Compression)
 		return
 	}
 }
@@ -163,7 +164,7 @@ func (this *FSHandler) WriteFile(w http.ResponseWriter, req *http.Request, conte
 //
 // It runs through the Regex in RequestContext.ErrorMap to see if it can find a match.
 // Otherwise it returns an empty string and an error
-func (this *FSHandler) FindErrorFile(error int) (string) {
+func (this *FSHandler) findErrorFile(error int) (string) {
 	// See if we have a specific file for the error by running through error map
 	errStr := strconv.Itoa(error)
 	for _, errorMapping := range this.ErrorMappings {
@@ -176,7 +177,12 @@ func (this *FSHandler) FindErrorFile(error int) (string) {
 	return ""
 }
 
-func (this *FSHandler) ShouldUseCompression(req *http.Request) bool {
+// shouldUseCompression detects whether we should consider compressing the response or not
+//
+// It detects whether the client has specified they can handle gzip and whether compression has been specified
+// in the config file. Whether compression is actually used depends on FileSystemLoader as it won't attempt
+// compression if the file turns out to be an image
+func (this *FSHandler) shouldUseCompression(req *http.Request) bool {
 	compressionTypes, acceptsCompression := req.Header[HeaderAcceptEncoding]
 	return this.Resource.Compression && acceptsCompression && containsInArray(compressionTypes, CompressionGzip)
 }

@@ -32,9 +32,9 @@ func NewHttpHandler(rsc *ServerResource, errorMappings []ErrorMapping) (*HttpHan
 
 func (this *HttpHandler) HandleRequest(w http.ResponseWriter, req *http.Request) {
 	Debug("+HandlerHttpSocket - Loading from http connection")
-	useCompression := this.ShouldUseCompression(req)
+	useCompression := this.shouldUseCompression(req)
 	if status := this.HandleSocket(w, req); !(status == http.StatusOK || status == http.StatusNotModified) {
-		this.HandleError(w, req, status, useCompression)
+		this.handleError(w, req, status, useCompression)
 	}
 }
 

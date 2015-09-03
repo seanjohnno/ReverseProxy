@@ -1,6 +1,5 @@
 package reverseproxy
 
-
 import (
 	"encoding/json"
 	"io"
@@ -87,9 +86,7 @@ type ServerResource struct {
 	Compression bool
 
 	// Error provides a map to match http error codes to error pages so the user is served these instead
-	//
-	// The key is a regular expression so we could have 40[0-9]: /error/40x.html
-	Error map[string]string
+	Error []ErrorRedirect
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -133,6 +130,22 @@ type FileSystemDefaults struct {
 	// This allows us to have search engine friend urls. For example, if '/index' is requested we
 	// could have []string{ ".html" } here so /index.html is returned
 	DefaultExtensions []string
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+// struct: ErrorRedirect
+// ------------------------------------------------------------------------------------------------------------------------
+
+// Error redirect is used to map a http response code to a HTML file
+//
+// This is used so a file can be served back to the client instead of a http error code
+type ErrorRedirect struct {
+
+	// Match is a regular expression which matches the error code
+	Match string
+
+	// Path is the relative path to the error html file
+	Path string
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
