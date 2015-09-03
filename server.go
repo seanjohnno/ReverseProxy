@@ -109,6 +109,8 @@ func CreateErrorMapping(resource ServerResource) []ErrorMapping {
 			}
 			em = append(em, ErrorMapping { Pattern: re, Path: errorRedirect.Path } )
 		}
+
+		return em
 	}
 	return nil
 }

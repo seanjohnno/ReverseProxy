@@ -6,6 +6,12 @@ import (
 	"net/http"
 	"os"
 	"github.com/seanjohnno/memcache"
+	"strconv"
+	"time"
+)
+
+var (
+	BaseUrl = ""
 )
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -64,6 +70,7 @@ func TestFileSystemHandler(t *testing.T) {
 		t.Error("Couldn't get working directory")
 	
 	} else {
+		BaseUrl = "http://localhost"
 
 		// Create server resource object that points at our test files directory
 		sr := &ServerResource {
@@ -71,7 +78,7 @@ func TestFileSystemHandler(t *testing.T) {
 			Cache: CacheStrategy{ Name: "", Strategy: "lru", Limit: 1024}, 
 			FSDefaults: FileSystemDefaults{ DefaultFiles: []string{ "index.html", "hello.html" }, DefaultExtensions: []string{ ".html", ".css" }}, 
 			Compression: false, 
-			Error: make([]ErrorRedirect, 0),
+			Error: []ErrorRedirect { ErrorRedirect{ Match:"404", Path:"/404.txt" } },
 		}
 		
 		// Create cache builder
@@ -160,8 +167,62 @@ func TestFileSystemHandler(t *testing.T) {
 		}
 
 		// Error mapping test
+		if r = HttpGet("/doesntexist.html", fsHandler, t); r == nil || r.RespCode != 200 || r.Data == nil || len(r.Data) == 0 {
+			t.Error("/doesntexist.html should have returned error file, returned", strconv.Itoa(r.RespCode))
+		} else if string(r.Data) != "404" {
+			t.Error("/doesntexist.html should be returning the error file /404.txt")
+		}
 
-		// Http test
+		// Test a regex and match order
+		sr.Error = []ErrorRedirect { ErrorRedirect{ Match:"40[0-9]", Path:"/40x.txt" }, ErrorRedirect{ Match:"404", Path:"/404.txt" } }
+		fsHandler.ErrorMappings = CreateErrorMapping(*sr)
+		if r = HttpGet("/doesntexist.html", fsHandler, t); r == nil || r.RespCode != 200 || r.Data == nil || len(r.Data) == 0 {
+			t.Error("/doesntexist.html should have returned error file, returned", strconv.Itoa(r.RespCode))
+		} else if string(r.Data) != "40x" {
+			t.Error("/doesntexist.html should be returning the error file /40x.txt")
+		}
+	}
+}
+
+// ------------------------------------------------------------------------------------------------------------------------
+// Test HttpHandler
+// ------------------------------------------------------------------------------------------------------------------------
+
+func TestHTTPHandler(t *testing.T) {
+
+	BaseUrl = "http://localhost:7890"
+
+	// Start http handler, it'll return the path that its passed
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.URL.Path))
+	})
+	go func() {
+		http.ListenAndServe(":7890", nil)
+	}()
+
+	// Wait for http server to come alive
+	for i := 0; ; i++ {
+		if i == 5 {
+			t.Error("Unable to start http server, can't complete http tests")
+			return
+		
+		} else if resp, err := http.Get("http://localhost:7890"); err == nil && resp.StatusCode == 200 {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	// Create http handler
+	sr := &ServerResource {
+			Match: "/", Type: "http_socket", Path: "http://localhost:7890",
+			Error: []ErrorRedirect { ErrorRedirect{ Match:"40[0-9]", Path:"/40x.txt" }, ErrorRedirect{ Match:"404", Path:"/404.txt" } },
+	}
+	httpHandler := NewHttpHandler(sr, CreateErrorMapping(*sr))
+
+	// Check that our http request is passed to our handler
+	var r *DummyResponseWriter
+	if r = HttpGet("/heyhey", httpHandler, t); r == nil || r.RespCode != 200 || r.Data == nil || len(r.Data) == 0 || string(r.Data) != "/heyhey" {
+		t.Error("Data should be /heyhey")
 	}
 }
 
@@ -236,7 +297,7 @@ func HttpGet(path string, handler RequestHandler, t *testing.T) (*DummyResponseW
 }
 
 func HttpGetWithHeaders(path string, handler RequestHandler, headers map[string][]string, t *testing.T) (*DummyResponseWriter) {
-	if rq, err := http.NewRequest("GET", "http://localhost" + path, nil); err != nil {
+	if rq, err := http.NewRequest("GET", BaseUrl + path, nil); err != nil {
 		t.Error("Failed to create request " + path)
 		return nil
 	} else {
